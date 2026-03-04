@@ -1,0 +1,15 @@
+# sequencing data
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+
+# raw data folder
+data/
+
+# RStudio
+.Rproj.user/
+
+# QC outputs
+analysis/**/fastqc_reports/
+analysis/**/multiqc_results/
