@@ -9,3 +9,66 @@ knitr::opts_chunk$set(echo = TRUE,
                        fig.align = "center", 
                        fig.path = "../figures/01_QualityTrimming")
 ```
+
+#Set up the Environment
+
+## Seeting the Seed
+
+```{r set-seed}
+set.seed(238428)
+```
+
+## Load libraries
+```{r}
+#Install Pacman
+install.packages("pacman")
+library(pacman)
+pacman::p_load(
+  tidyverse,
+  dada2,
+  patchwork,
+  Biostrings,
+  ShortRead,
+  install = TRUE)
+
+pacman::p_load(tidyverse, dada2, patchwork, 
+               Biostrings, ShortRead,
+               install = FALSE)
+```
+
+# Read raw seqeunces
+```{r read-fastq}
+#set the path to raw seq files
+raw_fastqs_path <- "data/00_raw_gzipped_fastqs"
+raw_fastqs_path
+
+# What files are in this path? Intuition Check 
+head(list.files(raw_fastqs_path))
+# How many files are in this path? Intuition Check 
+length(list.files(raw_fastqs_path))
+
+
+# create vector of Forward Reads, ending with "R1_001.fastq.gz"
+forward_reads <- list.files(raw_fastqs_path, pattern = "R1_001.fastq.gz", full.names = TRUE)
+head(forward_reads)
+
+# create vectors of Reverse Reads
+# Intuition check #2: We should have fewer reads in the forward vector than in total 
+stopifnot(length(forward_reads) < length(list.files(raw_fastqs_path)))
+
+# Create a vector of reverse reads 
+reverse_reads <- list.files(raw_fastqs_path, pattern = "R2_001.fastq.gz", full.names = TRUE)
+
+# Intuition Checks
+head(reverse_reads)
+
+# Intuition check #2: Need to have equal number of forward and reverse files 
+stopifnot(length(reverse_reads) == length(forward_reads))
+
+```
+
+
+
+
+
+
