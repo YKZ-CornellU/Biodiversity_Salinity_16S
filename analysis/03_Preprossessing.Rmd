@@ -1,0 +1,222 @@
+---
+title: "Preprossessing data analysis"
+output: html_document
+date: "2026-03-25"
+---
+
+
+# Goals
+1. Remove chloroplasts
+2. Remove mitochondria
+3. Remove ASVs from negative controls, and remove negative control samples
+4. Evaluate sequencing occurancy with the mock community (positive control)
+5. 
+
+# Output: 
+1. Cleaned up phyloseq object
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.align = "center",
+                      # send any figure output to this folder 
+                      fig.path = "../figures/02_PreProcessing/")
+# Set the seed for reproducibility
+set.seed(238428)
+
+# What time did we start running this script? 
+start_time <- Sys.time()
+
+# Load packages 
+pacman::p_load(devtools, phyloseq, Biostrings, tidyverse, dada2, install = FALSE)
+
+# Load the data 
+load("/local/workdir/yz3272/Biodiversity_Salinity_16S/data/02_AssignASVs/raw_physeq.RData")
+
+# Look at the data 
+raw_physeq
+
+```
+
+```{r Clean up the data}
+# Let's take a quick look at the tax table 
+# View(tax_df) # Let's see where chloroplasts are and also mitochondria
+
+# How to access what is in a phyloseq table
+view(tax_table(raw_physeq))
+view(otu_table(raw_physeq))
+
+# Make new physeq without chloroplasts
+noChloros_physeq <- 
+  raw_physeq %>% 
+  # rm chloroplasts, which are Order
+  subset_taxa(Order != "Chloroplast" | is.na(Order))
+  
+# How many taxa were chloroplasts? 
+num_chloro_ASVs <- ntaxa(raw_physeq) - ntaxa(noChloros_physeq)
+num_chloro_ASVs #248 chloroplast ASVs
+
+# Intuition chek 
+#noChloros_physeq %>%
+#  tax_table() %>%
+#  data.frame() %>%
+#  View()
+
+# remove mitochondria 
+noChlorosMitos_physeq <- 
+  noChloros_physeq %>%
+  subset_taxa(Family != "Mitochondria" | is.na(Family))
+
+# How many mitochondrial ASVs? 
+num_mito_ASVs <- ntaxa(noChloros_physeq) - ntaxa(noChlorosMitos_physeq)
+num_mito_ASVs ##74 mito ASVs
+
+# Let's take a quick look 
+noChlorosMitos_physeq
+
+# How many total asvs were removed from chloros and mitos? 
+ntaxa(raw_physeq) - ntaxa(noChlorosMitos_physeq)
+
+# proportion of asvs kept? 
+ntaxa(noChlorosMitos_physeq)/ntaxa(raw_physeq)
+```
+```{r Negative controls}
+# create a vector of samples that were negative controls 
+control_samples <- c("WaterControl", "022um-Control", "3um-Control", "DNA-Ext-Control")
+
+# Make a new phyloseq object of only the control samples 
+control_physeq <- 
+  noChlorosMitos_physeq %>%
+  subset_samples(., names %in% control_samples) %>%
+  # force remove ASVs with 0 counts 
+  prune_taxa(taxa_sums(.) > 0, .)
+
+# Let's take a look
+control_physeq
+
+# vector of control asvs
+control_ASVs <- 
+  control_physeq %>%
+  tax_table() %>%
+  data.frame() %>%
+  dplyr::select(ASV) %>%
+  as.vector()
+
+# Visualize raw abundance values of control ASVs
+control_physeq %>%
+  plot_bar(., "ASV", fill = "ASV")
+
+############# Check the control ASVs in the samples 
+# Make new phyloseq object with only the control ASVs and ALL samples 
+controlASV_physeq <- 
+  noChlorosMitos_physeq %>%
+  subset_taxa(., ASV %in% control_ASVs$ASV)
+
+# Inspect it 
+controlASV_physeq
+
+# Let's take a look at the abundances 
+controlASV_physeq %>%
+  plot_bar(., "ASV", fill = "ASV", facet_grid = Sample_or_Control~.)
+
+view(tax_table(controlASV_physeq))
+#see interpretation below
+
+# Would only like to keep ASV_0019 and ASV_0055, everything else is trash
+controlASVs_toREMOVE <- dplyr::setdiff(control_ASVs$ASV, c("ASV_0019", "ASV_0055"))
+# double check 
+length(controlASVs_toREMOVE)
+
+### Make my new phloseq object 
+noControlsChlorosMitos_physeq <- 
+  noChlorosMitos_physeq %>%
+  # Actually remove the 29 control ASVs 
+  subset_taxa(., !(ASV %in% controlASVs_toREMOVE)) %>% #subset to remove the control ASVs to remove
+  # Remove control samples 
+  subset_samples(., !(names %in% control_samples))
+
+# Inspect no controls object 
+noControlsChlorosMitos_physeq
+
+# After filtering, how many ASVs were removed? 
+total_ASVs_rm <- ntaxa(raw_physeq) - ntaxa(noControlsChlorosMitos_physeq)
+total_ASVs_rm
+
+
+```
+### Interpretation: 
+ASV 3 looks like contamination, but ASV 0019 and 0055 are likely real taxa (water microbes) and need to check in the actual data of samples, see who they are, whether they are abundant water taxa, if not, these two and all other empty ASVs can be removed.After checking, 19 and 55 are indeed water microbes, we will keep these two. 
+
+```{r Evaluate mock community}
+# Make mock phyloseq object 
+mock_physeq <- 
+  noControlsChlorosMitos_physeq %>%
+  subset_samples(., names == "MockZymoPos") %>%
+  prune_taxa(taxa_sums(.) > 0, .)
+
+# Inspect it 
+mock_physeq
+
+tax_table(mock_physeq)
+
+# write us a messages summarizing this
+cat("DADA2 inferred", ntaxa(mock_physeq), "ASVs present in the mock community.")
+
+####### Load in the mock reference sequence from Zymo 
+mock_ref <- getSequences("data/Lecture/03_PreProcessing_Lecture/mock_amplicons.fasta")
+names(mock_ref)
+
+### Pull out seqs from Sequenced Mock community
+mock_seqs <- 
+  mock_physeq %>%
+  tax_table() %>%
+  data.frame() %>%
+  dplyr::select(ASV, ASVseqs) 
+
+# Inspect
+head(mock_seqs)
+
+# Which ASVs match the reference? 
+matched_asvs <- 
+  mock_seqs %>%
+  rowwise() %>%
+  # check each ASV if they match, TRUE, if not = FALSE
+  mutate(Match = any(grepl(ASVseqs, mock_ref))) %>%
+  # Create a vector of names that matched 
+  pull(ASV)
+
+
+# Evaluate which ones do NOT match?? 
+# What's their abundances? 
+# This help provide error rate 
+cat(length(matched_asvs), "ASVs were exact matches to the expected reference sequence.")
+
+# How many sequences were in the mock? 
+mock_SeqDepth <- 
+  mock_physeq %>%
+  otu_table() %>%
+  data.frame() %>%
+  colSums()
+
+
+# Who is in the sequenced mock community? 
+mock_physeq %>%
+  tax_table() %>%
+  data.frame() %>%
+  dplyr::select(Genus, Species)
+
+names(mock_ref)
+
+# Curious: What are the mock counts in the actual samples 
+noControlsChlorosMitos_physeq %>%
+  subset_taxa(., ASV %in% matched_asvs) %>%
+  otu_table() %>%
+  t()
+```
+
+```{r}
+
+```
+
+
+
